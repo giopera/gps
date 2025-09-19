@@ -1,77 +1,206 @@
+import copy
 import json
 import re
 import sys
 
+coordinates = set()
+
+def filter_feature(filter_criteria, feature):
+    output = True
+    for criteria in filter_criteria:
+        output = output and re.match(
+            criteria[1].lower(), feature["properties"][criteria[0]].lower()
+        )
+    return output
+
+def translation(criteria, feature):
+    if feature["properties"].get(criteria[0], None):
+        feature["properties"][criteria[1]] = feature["properties"].pop(criteria[0])
+
+def delete(criteria, feature):
+    if feature["properties"].get(criteria, None):
+        feature["properties"].pop(criteria)
+    
+def soft_delete(criteria, feature):
+    if feature["properties"].get(criteria, None) == "":
+        feature["properties"].pop(criteria)
+        
+def case(criteria, feature):
+    if feature["properties"].get(criteria, None):
+        feature["properties"][criteria] = feature["properties"][criteria].title()
+
+def lowercase(criteria, feature):
+    if feature["properties"].get(criteria, None):
+        feature["properties"][criteria] = feature["properties"][criteria].lower()
+
+def concatenate(criteria, feature):
+    if feature["properties"].get(criteria[0], None) and feature["properties"].get(criteria[1], None):
+        feature["properties"][criteria[0]] += feature["properties"][criteria[1]]
+        feature["properties"].pop(criteria[1])
+
+def split_values(criteria, feature):
+    if feature["properties"].get(criteria[0], None):
+        splitted = feature["properties"][criteria[0]].split(criteria[1])
+        if len(splitted) != 0:
+            to_return = []
+            feature["properties"][criteria[0]] = splitted[0]
+            del splitted[0]
+            for val in splitted:
+                new_dict = feature.copy()
+                new_dict["properties"][criteria[0]] = val
+                to_return.append(new_dict)
+
+def check_uniqueness(criteria: set, feature):
+    iteration = 0
+    if feature["geometry"] is None or feature["geometry"]["coordinates"] is None:
+        return
+    while f"{feature["geometry"]["coordinates"][0]}+{feature["geometry"]["coordinates"][1]}" in criteria:
+        iteration = iteration + 1
+        if iteration % 2:
+            feature["geometry"]["coordinates"][0] += 0.000001
+        else:
+            feature["geometry"]["coordinates"][1] += 0.000001
+    criteria.add(f"{feature["geometry"]["coordinates"][0]}+{feature["geometry"]["coordinates"][1]}")
+
+def manipulate_coord(criteria, feature):
+    change = float(criteria[1])
+    position = 0
+    if criteria[0][0] == "-":
+        change *= -1
+    if criteria[0][1] == "y":
+        position = 1
+
+    if feature["geometry"] is not None:
+        feature["geometry"]["coordinates"][position] += change
+
+def conditional_operation(criteria: list[str], feature):
+    criteria = copy.deepcopy(criteria)
+    criteria[1] = criteria[1].replace(":", "")
+    for key, val in feature["properties"].items():
+        criteria[0] = criteria[0].replace(key, val)
+    if eval(criteria[0]):
+        del criteria[0]
+        fun, arg_arr = parse_arg(criteria)
+        fun(arg_arr, feature)
+
+def polish_arg(arr, stop = None):
+    if stop is None:
+        arr_len = len(arr)
+    else:
+        arr_len = stop
+    counter = 0
+    while counter < arr_len:
+        del arr[counter]
+        counter += 1
+        arr_len -= 1
+
+
+
+def parse_arg(argument: str|list):
+    if type(argument) is str:
+        arg = argument.split("\"")
+    else:
+        arg = argument
+    alen = len(arg)
+    if alen > 2 and arg[2].startswith(":"):
+        polish_arg(arg, 1)
+        return conditional_operation, arg
+    elif alen > 2 and "^" == arg[2]:
+        polish_arg(arg)
+        return translation, arg
+    elif alen > 0 and "-" == arg[0]:
+        polish_arg(arg)
+        return delete, arg[0]
+    elif alen > 0 and "~" == arg[0]:
+        polish_arg(arg, 2)
+        return soft_delete, arg[0]
+    elif alen > 0 and "_" == arg[0]:
+        polish_arg(arg, 2)
+        return lowercase, arg[0]
+    elif alen > 0 and "§" == arg[0]:
+        polish_arg(arg, 2)
+        return case, arg[0]
+    elif alen > 0 and arg[0] in ["+x", "-x", "+y", "-y"]:
+        return manipulate_coord, arg
+    elif alen > 2 and "+" == arg[2]:
+        polish_arg(arg, 3)
+        return concatenate, arg
+    elif alen > 2 and "[" in arg[2] and arg[2].endswith("]"):
+        polish_arg(arg, 3)
+        arg[2] = arg[2].strip("[")
+        arg[2] = arg[2].strip("]")
+        return split_values, arg
+    elif alen > 0 and arg[0] == "#":
+        return check_uniqueness, coordinates
+
+    return None
+
+def parse_filter(arg):
+    arg = arg.split("\"")
+    if len(arg) > 2 and arg[2] == "=":
+        polish_arg(arg, 3)
+        return arg
+    return None
+
 if __name__ == "__main__":
-    if not sys.argv[1].endswith(".geojson"):
-        print("No input file, or file not in valid geojson")
-    database_file = sys.argv[1]
-    if not sys.argv[2].endswith(".geojson"):
-        print("No output file, or file not in valid geojson")
-    output_file = sys.argv[2]
+    script = None
+    if sys.argv[1].endswith(".gps"):
+        script = sys.argv[1]
+    if script:
+        with open(script, "r") as sc:
+            database_file = sc.readline().strip()
+            output_file = sc.readline().strip()
+    else:
+        if not sys.argv[1].endswith(".geojson"):
+            print("No input file, or file not in valid geojson")
+        database_file = sys.argv[1]
+        if not sys.argv[2].endswith(".geojson"):
+            print("No output file, or file not in valid geojson")
+        output_file = sys.argv[2]
+
     with open(database_file, "r") as f:
         with open(output_file, "w") as out:
-            out.write('{"type": "FeatureCollection","features": [')
-            out.flush()
+            command_list = []
+            if script:
+                with open(script, "r") as sc:
+                    command_list = [i.strip("\n").strip() for i in sc.readlines()]
+                    del command_list[0]
+                    del command_list[0]
+            else:
+                command_list = sys.argv
+                del command_list[0]
+            parse_list = []
             filter_criteria = []
-            translation = []
-            delete_criteria = []
-            soft_delete_criteria = []
-            all_lowercase_criteria = []
-            case_criteria = []
-            for arg in sys.argv:
-                if "=" in arg:
-                    filter_criteria.append(arg.split("="))
-                elif "^" in arg:
-                    translation.append(arg.split("^"))
-                elif arg.startswith("-"):
-                    delete_criteria.append(arg.lstrip("-"))
-                elif arg.startswith("~"):
-                    soft_delete_criteria.append(arg.lstrip("~"))
-                elif arg.startswith("_"):
-                    all_lowercase_criteria.append(arg.lstrip("_"))
-                elif arg.startswith("§"):
-                    case_criteria.append(arg.lstrip("§"))
-            check = len(filter_criteria) != 0
-            translate = len(translation) != 0
-            delete = len(delete_criteria) != 0
-            soft_delete = len(soft_delete_criteria) != 0
-            all_lowercase = len(all_lowercase_criteria) != 0
-            case = len(case_criteria) != 0
+            count = 0
+            for arg in command_list:
+                result = parse_filter(arg)
+                if result is not None:
+                    filter_criteria.append(result)
+                    del command_list[count]
+                count += 1
+            for arg in command_list:
+                parse_list.append(parse_arg(arg))
+            out.write('{"type": "FeatureCollection","features": [')
+            coda = []
             for line in f:
-                output = True
                 line = line.strip()
                 d: dict = json.loads(line)
-                if check:
-                    for criteria in filter_criteria:
-                        output = output and re.match(
-                            criteria[1].lower(), d["properties"][criteria[0]].lower()
-                        )
-                if output:
-                    if delete:
-                        for criteria in delete_criteria:
-                            d["properties"].pop(criteria)
-                    if soft_delete:
-                        for criteria in soft_delete_criteria:
-                            if d["properties"].get(criteria, "") == "":
-                                d["properties"].pop(criteria)
-                    if case:
-                        for criteria in case_criteria:
-                            d["properties"][criteria] = d["properties"][criteria].title()
-                    if all_lowercase:
-                        for criteria in all_lowercase_criteria:
-                            d["properties"][criteria] = d["properties"][criteria].lower()
-                    if translate:
-                        for criteria in translation:
-                            if d["properties"].get(criteria[0], None) is not None:
-                                d["properties"][criteria[1]] = d["properties"].pop(
-                                    criteria[0]
-                                )
-                        out.write(f"{json.dumps(d)},")
-                    else:
-                        line = line.replace("\n", "")
-                        line += ","
-                        out.write(line)
+
+                if filter_feature(filter_criteria, d):
+                    for function, criteria in parse_list:
+                        value = function(criteria, d)
+                        if type(value) is list:
+                            for feature in value:
+                                coda.append(feature)
+                    out.write(f"{json.dumps(d)},")
+            for d in coda:
+                if filter_feature(filter_criteria, d):
+                    for function, criteria in parse_list:
+                        value = function(criteria, d)
+                        if type(value) is list:
+                            for feature in value:
+                                coda.append(feature)
+                    out.write(f"{json.dumps(d)},")
         with open(output_file, "rb+") as out:
             out.seek(-1, 2)
             out.truncate()

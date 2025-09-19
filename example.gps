@@ -1,0 +1,17 @@
+../subset.geojson
+../processed.geojson
+"city"="Bassano del grappa"
+-"region"
+-"hash"
+~"unit"
+~"id"
+~"postcode"
+§"street"
+_"unit"
+"number"+"unit"
+"city"^"addr:city"
+"postcode"^"addr:postcode"
+"street"^"addr:street"
+"district"^"addr:province"
+"number"^"addr:housenumber"
+#
