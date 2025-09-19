@@ -1,9 +1,15 @@
 # GPS File Specification
+## How to use the program
+To use the program you just need to run it with python3 and then input the name of the gps file.
 
-### Input and Output
+`python3 main.py example.gps`
+
+Remember to change the input and output file in the example script file
+
+## Input and Output
 The first two lines tell the script what are the input file (a GeoJSON NL type file), and the output file (a normal GeoJSON file).
 
-### Filter the records
+## Filter the records
 Then we can start describing how we want to filter the data, we can write `"city"="New York"` and the script will filter for the "city" value in the "properties" section
 
 ## Transformative Operations
