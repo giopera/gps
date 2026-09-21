@@ -1,12 +1,12 @@
 ../subset.geojson
-../processed.geojson
-"city"="Bassano del grappa"
+../test.geojson
+"city"=="Cassola"
 -"region"
 -"hash"
 ~"unit"
 ~"id"
 ~"postcode"
-§"street"
+@"street"
 _"unit"
 "number"+"unit"
 "city"^"addr:city"
